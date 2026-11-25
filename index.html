@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Purchasing Assistant</title>
+<style>
+  :root {
+    --bg: #1B1D21;
+    --panel: #22252A;
+    --raised: #2A2D33;
+    --border: #353940;
+    --text: #E2E4E7;
+    --muted: #A9AFB8;
+    --accent: #C8AE82;
+    --error: #E39A8F;
+    --space: 16px;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+  }
+  button, textarea, input { font: inherit; color: inherit; }
+  button {
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  button:hover { background: #33373E; border-color: #454A52; }
+  button:disabled { cursor: default; color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #1B1D21; font-weight: 600; text-align: center; }
+  button.primary:hover { background: #D6BE95; border-color: #D6BE95; }
+
+  /* sidebar */
+  aside {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: calc(var(--space) * 2) calc(var(--space) * 1.25);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 0.5);
+    overflow-y: auto;
+  }
+  aside h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  aside .spacer { flex: 1; }
+  .status { color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: var(--space); }
+  .status b { color: var(--text); font-weight: 600; }
+
+  /* main */
+  main { display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+  #scroll { flex: 1; overflow-y: auto; }
+  .column { max-width: 760px; margin: 0 auto; padding: 0 calc(var(--space) * 1.5); }
+  header { padding: calc(var(--space) * 3) 0 calc(var(--space) * 1.5); }
+  header h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; }
+  header p { color: var(--muted); margin: 0; }
+  .notice { border: 1px solid #5A3F3A; background: #2B2222; color: var(--error); border-radius: var(--radius); padding: 12px var(--space); margin-bottom: var(--space); }
+
+  .msg { margin-bottom: var(--space); }
+  .msg.user { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px var(--space); }
+  .msg.assistant { padding: 4px 0; }
+  .msg p { margin: 0 0 10px; }
+  .msg p:last-child { margin-bottom: 0; }
+  .msg table { border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+  .msg th, .msg td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+  .msg th { background: var(--panel); font-weight: 600; }
+  .msg code { background: var(--raised); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .msg ul, .msg ol { margin: 0 0 10px; padding-left: 22px; }
+  .msg .photos { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .msg .photos img { height: 140px; border-radius: 6px; border: 1px solid var(--border); }
+  .msg.error { color: var(--error); }
+  .thinking { color: var(--muted); }
+
+  details { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+  details summary { cursor: pointer; color: var(--text); }
+  details .step { margin-top: 8px; }
+  details pre { white-space: pre-wrap; background: var(--panel); padding: 8px; border-radius: 6px; margin: 4px 0 0; color: var(--text); }
+
+  /* input */
+  footer { padding: var(--space) 0 calc(var(--space) * 1.5); }
+  .composer { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+  .composer:focus-within { border-color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips:not(:empty) { margin-bottom: 10px; }
+  .chip { display: flex; align-items: center; gap: 8px; background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 4px 4px 4px 4px; font-size: 13px; }
+  .chip img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+  .chip button { padding: 2px 8px; font-size: 12px; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; padding: 8px 4px; max-height: 200px; }
+  textarea::placeholder { color: var(--muted); }
+
+  /* sign in */
+  .signin { max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
+  .signin input { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .signin input:focus { outline: none; border-color: var(--accent); }
+  .signin label { font-size: 14px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+
+  @media (max-width: 760px) {
+    body { grid-template-columns: 1fr; }
+    aside { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<aside>
+  <h2>Example questions</h2>
+  <div id="examples" style="display:flex;flex-direction:column;gap:8px"></div>
+  <button id="clear" style="margin-top:8px">Clear chat</button>
+  <div class="spacer"></div>
+  <div class="status" id="status">Checking connection</div>
+</aside>
+
+<main>
+  <div id="scroll">
+    <div class="column">
+      <header>
+        <h1>Purchasing Assistant</h1>
+        <p>Ask about purchase orders, vendors, spend and deliveries. Answers come from live data and the assistant cannot change anything.</p>
+      </header>
+      <div id="notice"></div>
+      <div id="signin" hidden>
+        <form class="signin" id="signinForm">
+          <label>Your name <input id="name" autocomplete="name" required></label>
+          <label>Team password <input id="password" type="password" required></label>
+          <button class="primary" type="submit">Sign in</button>
+        </form>
+      </div>
+      <div id="log"></div>
+    </div>
+  </div>
+  <footer id="footer">
+    <div class="column">
+      <div class="composer">
+        <div class="chips" id="chips"></div>
+        <div class="row">
+          <button id="attach" title="Attach photos">Attach photo</button>
+          <input id="file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <textarea id="input" rows="1" placeholder="Ask a question, or attach a photo of a quote, invoice or part label"></textarea>
+          <button id="send" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+  </footer>
+</main>
+
+<script>
+const EXAMPLES = [
+  "Which PO lines are overdue?",
+  "Top 5 vendors by spend this year",
+  "Which vendor is worst at delivering on time?",
+  "What did we last pay for the compressor control PCB?",
+  "Show me PO 4500000105",
+];
+const $ = (id) => document.getElementById(id);
+const chat = [];          // {role, content, images}
+let pendingPhotos = [];      // {name, dataUrl, base64}
+let busy = false;
+let user = { name: "local", password: "" };
+
+// ---------- small helpers ----------
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function inline(s) {
+  return s.replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+// Turns the model's markdown (paragraphs, lists, tables) into HTML.
+function renderMarkdown(text) {
+  const lines = escapeHtml(text).split("\n");
+  let html = "", i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*\|/.test(line)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => inline(c.trim()));
+      const body = rows.filter((r, n) => !(n === 1 && /^[\s|:-]+$/.test(r)));
+      html += "<table><thead><tr>" + cells(body[0]).map((c) => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+      for (const r of body.slice(1)) html += "<tr>" + cells(r).map((c) => `<td>${c}</td>`).join("") + "</tr>";
+      html += "</tbody></table>";
+    } else if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line);
+      html += ordered ? "<ol>" : "<ul>";
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        html += "<li>" + inline(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, "")) + "</li>";
+      }
+      html += ordered ? "</ol>" : "</ul>";
+    } else if (line.trim() === "") {
+      i++;
+    } else {
+      const para = [];
+      while (i < lines.length && lines[i].trim() !== "" && !/^\s*(\||[-*]\s|\d+\.\s)/.test(lines[i])) para.push(lines[i++]);
+      html += "<p>" + inline(para.join("<br>")) + "</p>";
+    }
+  }
+  return html;
+}
+function scrollDown() { $("scroll").scrollTop = $("scroll").scrollHeight; }
+
+// ---------- chat log ----------
+function addMessage(role, content, { images = [], steps = [], error = false } = {}) {
+  const div = document.createElement("div");
+  div.className = `msg ${role}` + (error ? " error" : "");
+  let html = "";
+  if (images.length) html += '<div class="photos">' + images.map((src) => `<img src="${src}" alt="Attached photo">`).join("") + "</div>";
+  if (steps.length) {
+    html += `<details><summary>Sources (${steps.length})</summary>` + steps.map((s) => {
+      const inputs = s.inputs.sql
+        ? `<pre>${escapeHtml(s.inputs.sql)}</pre>`
+        : Object.entries(s.inputs).map(([k, v]) => `${escapeHtml(k)} = ${escapeHtml(String(v))}`).join(", ");
+      return `<div class="step"><strong>${escapeHtml(s.tool)}</strong>, ${escapeHtml(String(s.result))}<br>${inputs}</div>`;
+    }).join("") + "</details>";
+  }
+  html += role === "user" ? `<p>${escapeHtml(content).replace(/\n/g, "<br>")}</p>` : renderMarkdown(content);
+  div.innerHTML = html;
+  $("log").appendChild(div);
+  scrollDown();
+  return div;
+}
+
+async function send(text) {
+  text = (text ?? $("input").value).trim();
+  if (busy || (!text && !pendingPhotos.length)) return;
+  if (!text) text = "What is in this photo, and how does it compare with our purchasing data?";
+
+  const photos = pendingPhotos;
+  pendingPhotos = []; renderChips();
+  $("input").value = ""; autoGrow();
+
+  addMessage("user", text, { images: photos.map((p) => p.dataUrl) });
+  chat.push({ role: "user", content: text, images: photos.map((p) => p.base64) });
+
+  busy = true; $("send").disabled = true;
+  const waiting = addMessage("assistant", "Looking it up. The first answer can take up to a minute while the model loads.");
+  waiting.classList.add("thinking");
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: chat, name: user.name, password: user.password }),
+    });
+    const data = await res.json();
+    waiting.remove();
+    if (!res.ok) {
+      chat.pop();
+      addMessage("assistant", data.error || "Something went wrong.", { error: true });
+      if (res.status === 401) showSignIn();
+    } else {
+      chat.push({ role: "assistant", content: data.answer });
+      addMessage("assistant", data.answer, { steps: data.steps });
+    }
+  } catch (e) {
+    waiting.remove();
+    chat.pop();
+    addMessage("assistant", "Can't reach the server. Check that app.py is still running.", { error: true });
+  }
+  busy = false; $("send").disabled = false;
+  $("input").focus();
+}
+
+// ---------- photos ----------
+// Shrinks a photo to at most 1280 px so it uploads and reads quickly.
+function loadPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      URL.revokeObjectURL(img.src);
+      resolve({ name: file.name, dataUrl, base64: dataUrl.split(",")[1] });
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function renderChips() {
+  $("chips").innerHTML = "";
+  pendingPhotos.forEach((p, n) => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `<img src="${p.dataUrl}" alt=""><span>${escapeHtml(p.name)}</span>`;
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.onclick = () => { pendingPhotos.splice(n, 1); renderChips(); };
+    chip.appendChild(remove);
+    $("chips").appendChild(chip);
+  });
+}
+$("attach").onclick = () => $("file").click();
+$("file").onchange = async (e) => {
+  for (const file of e.target.files) {
+    try { pendingPhotos.push(await loadPhoto(file)); } catch { alert(`Couldn't read ${file.name}.`); }
+  }
+  e.target.value = "";
+  renderChips();
+};
+
+// ---------- input box ----------
+function autoGrow() { const t = $("input"); t.style.height = "auto"; t.style.height = t.scrollHeight + "px"; }
+$("input").addEventListener("input", autoGrow);
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("send").onclick = () => send();
+$("clear").onclick = () => { chat.length = 0; $("log").innerHTML = ""; };
+for (const q of EXAMPLES) {
+  const b = document.createElement("button");
+  b.textContent = q;
+  b.onclick = () => send(q);
+  $("examples").appendChild(b);
+}
+
+// ---------- sign in (only when the server has APP_PASSWORD set) ----------
+function showSignIn() { $("signin").hidden = false; $("footer").hidden = true; }
+$("signinForm").onsubmit = (e) => {
+  e.preventDefault();
+  user = { name: $("name").value.trim(), password: $("password").value };
+  try { sessionStorage.setItem("user", JSON.stringify(user)); } catch {}
+  $("signin").hidden = true; $("footer").hidden = false;
+  $("input").focus();
+};
+
+// ---------- status ----------
+async function checkStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("status").innerHTML = `<b>Model</b> ${escapeHtml(s.model)} (${s.model_running ? "running" : "not running"})<br>` +
+                            `<b>Data</b> ${escapeHtml(s.data)}, read-only`;
+    $("notice").innerHTML = s.model_running ? "" :
+      `<div class="notice">Can't reach Ollama. Open the Ollama app, or run <code>ollama serve</code>, then make sure the model is downloaded with <code>ollama pull ${escapeHtml(s.model)}</code>.</div>`;
+    if (s.password_required && !user.password) showSignIn();
+  } catch {
+    $("status").textContent = "Server not reachable";
+  }
+}
+try { const saved = JSON.parse(sessionStorage.getItem("user")); if (saved) user = saved; } catch {}
+checkStatus();
+setInterval(checkStatus, 15000);
+$("input").focus();
+</script>
+</body>
+</html>
