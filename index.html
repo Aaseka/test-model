@@ -241,7 +241,7 @@ async function send(text) {
   chat.push({ role: "user", content: text, images: photos.map((p) => p.base64) });
 
   busy = true; $("send").disabled = true;
-  const waiting = addMessage("assistant", "Looking it up. The first answer can take up to a minute while the model loads.");
+  const waiting = addMessage("assistant", "Looking it up.");
   waiting.classList.add("thinking");
   try {
     const res = await fetch("/api/chat", {
@@ -338,10 +338,9 @@ $("signinForm").onsubmit = (e) => {
 async function checkStatus() {
   try {
     const s = await (await fetch("/api/status")).json();
-    $("status").innerHTML = `<b>Model</b> ${escapeHtml(s.model)} (${s.model_running ? "running" : "not running"})<br>` +
+    $("status").innerHTML = `<b>Model</b> ${escapeHtml(s.model)}${s.ready ? "" : " (not set up)"}<br>` +
                             `<b>Data</b> ${escapeHtml(s.data)}, read-only`;
-    $("notice").innerHTML = s.model_running ? "" :
-      `<div class="notice">Can't reach Ollama. Open the Ollama app, or run <code>ollama serve</code>, then make sure the model is downloaded with <code>ollama pull ${escapeHtml(s.model)}</code>.</div>`;
+    $("notice").innerHTML = s.ready ? "" : `<div class="notice">${escapeHtml(s.problem)}</div>`;
     if (s.password_required && !user.password) showSignIn();
   } catch {
     $("status").textContent = "Server not reachable";

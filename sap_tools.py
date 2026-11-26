@@ -160,7 +160,7 @@ def run_tool(name: str, args: dict) -> dict:
 
 
 def tool_definitions() -> list:
-    """The tool list in the format Ollama expects."""
+    """The tool list in the OpenAI-style format."""
     tools = []
     for name, report in REPORTS.items():
         tools.append({"type": "function", "function": {
@@ -179,3 +179,164 @@ def tool_definitions() -> list:
         "parameters": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]},
     }})
     return tools
+
+
+# ---------------------------------------------------------------------------
+# SAP export mode. When the database holds your own SAP exports (made with
+# load_sap_export.py) instead of the demo tables, the ready-made reports don't
+# apply. The AI gets a description of your real tables and columns instead,
+# with a few example values, and writes its own read-only queries.
+# ---------------------------------------------------------------------------
+def _describe_database() -> str:
+    from sqlalchemy import inspect
+    lines = ["Data: SAP exports loaded into SQLite. Dates are yyyy-mm-dd text.",
+             "Use custom_query with SQLite syntax. Match text with UPPER(col) LIKE UPPER('%word%').",
+             "Tables and columns, with example values:"]
+    with engine.connect() as conn:
+        for table in inspect(engine).get_table_names():
+            count = conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar()
+            lines.append(f'\nTable "{table}" ({count} rows):')
+            for col in inspect(engine).get_columns(table):
+                name = col["name"]
+                samples = conn.execute(text(
+                    f'SELECT DISTINCT "{name}" FROM "{table}" WHERE "{name}" IS NOT NULL LIMIT 3')).scalars().all()
+                shown = ", ".join(str(s)[:30] for s in samples)
+                lines.append(f"  {name} ({col['type']}): {shown}")
+    lines.append("\nIf a column's meaning is unclear, check a few rows first. Say which columns you used.")
+    return "\n".join(lines)
+
+
+try:
+    from sqlalchemy import inspect as _inspect
+    _tables = {t.upper() for t in _inspect(engine).get_table_names()}
+    EXPORT_MODE = bool(_tables) and "EKKO" not in _tables
+except Exception:
+    EXPORT_MODE = False
+
+if EXPORT_MODE:
+    REPORTS = {}
+    SCHEMA = _describe_database()
+
+
+# ---------------------------------------------------------------------------
+# SAP OData mode (the "link"). Set SAP_ODATA_URL in .env to use it, e.g.
+#   SAP_ODATA_URL=https://sap-server:44300/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV
+# At startup the app reads the service's $metadata, so the AI knows every
+# entity set and field the service offers. It can only send GET requests.
+# ---------------------------------------------------------------------------
+SAP_ODATA_URL = os.getenv("SAP_ODATA_URL", "").rstrip("/")
+
+
+def _odata_session():
+    import requests
+    s = requests.Session()
+    s.auth = (os.getenv("SAP_USER", ""), os.getenv("SAP_PASSWORD", ""))
+    s.headers["Accept"] = "application/json"
+    verify = os.getenv("SAP_VERIFY_TLS", "true")
+    # "true", "false", or a path to the company's certificate file (.pem)
+    s.verify = True if verify.lower() == "true" else False if verify.lower() == "false" else verify
+    if os.getenv("SAP_CLIENT"):
+        s.params = {"sap-client": os.getenv("SAP_CLIENT")}
+    return s
+
+
+def _odata_metadata() -> str:
+    """Read $metadata and describe entity sets and their fields for the AI."""
+    import xml.etree.ElementTree as ET
+    r = _odata_session().get(f"{SAP_ODATA_URL}/$metadata", headers={"Accept": "application/xml"}, timeout=30)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    local = lambda el: el.tag.split("}")[-1]
+    types = {}
+    for el in root.iter():
+        if local(el) == "EntityType":
+            fields = [p.get("Name") for p in el if local(p) == "Property"]
+            types[el.get("Name")] = fields
+    lines = [f"Data: live SAP OData service {SAP_ODATA_URL.split('/')[-1]}.",
+             "Use odata_query. Entity sets and their fields:"]
+    for el in root.iter():
+        if local(el) == "EntitySet":
+            type_name = el.get("EntityType", "").split(".")[-1]
+            fields = types.get(type_name, [])
+            lines.append(f"  {el.get('Name')}: {', '.join(fields[:60])}")
+    lines.append("Filter syntax examples: Supplier eq '100001', PurchaseOrderDate ge datetime'2026-01-01T00:00:00' "
+                 "(OData V2) or PurchaseOrderDate ge 2026-01-01 (OData V4), substringof('steel',SupplierName) (V2).")
+    lines.append("Always use $select with only the fields you need, and a $top, to keep results small.")
+    return "\n".join(lines)
+
+
+def _clean_odata_value(v):
+    if isinstance(v, str):
+        m = re.match(r"^/Date\((-?\d+)", v)  # OData V2 dates look like /Date(1700000000000)/
+        if m:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(int(m.group(1)) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    return v
+
+
+def run_odata(args: dict) -> dict:
+    entity = str(args.get("entity_set", "")).strip().strip("/")
+    if not re.match(r"^[A-Za-z0-9_]+(\([^)]*\))?(/[A-Za-z0-9_]+)?$", entity):
+        return {"error": "entity_set must be an entity set name from the list, like A_PurchaseOrder."}
+    params = {"$top": str(min(int(args.get("top") or MAX_ROWS), MAX_ROWS))}
+    for key in ("filter", "select", "orderby", "expand"):
+        if args.get(key):
+            params[f"${key}"] = args[key]
+    try:
+        r = _odata_session().get(f"{SAP_ODATA_URL}/{entity}", params=params, timeout=60)
+    except Exception as e:
+        return {"error": f"Can't reach SAP: {str(e)[:300]}"}
+    if r.status_code in (401, 403):
+        return {"error": "SAP refused the login. Check SAP_USER and SAP_PASSWORD."}
+    if r.status_code >= 400:
+        try:
+            body = r.json()
+            msg = body.get("error", {}).get("message", {})
+            msg = msg.get("value", msg) if isinstance(msg, dict) else msg
+        except ValueError:
+            msg = r.text
+        return {"error": f"SAP returned an error: {str(msg)[:400]}"}
+    data = r.json()
+    rows = data.get("d", {}).get("results", data.get("d")) if "d" in data else data.get("value", [])
+    if isinstance(rows, dict):
+        rows = [rows]
+    clean = []
+    for row in rows or []:
+        clean.append({k: _clean_odata_value(v) for k, v in row.items()
+                      if not k.startswith("__") and not (isinstance(v, dict) and "__deferred" in v)})
+    return {"rows": clean, "row_count": len(clean), "truncated": len(clean) >= MAX_ROWS}
+
+
+if SAP_ODATA_URL:
+    REPORTS = {}
+    EXPORT_MODE = False
+    ODATA_ERROR = ""
+    try:
+        SCHEMA = _odata_metadata()
+    except Exception as e:
+        ODATA_ERROR = f"Can't read the SAP service: {str(e)[:200]}. Check SAP_ODATA_URL, SAP_USER and SAP_PASSWORD in .env."
+        SCHEMA = (f"Data: SAP OData service {SAP_ODATA_URL}. Its $metadata could not be read ({str(e)[:200]}). "
+                  "Tell the user SAP can't be reached right now.")
+
+    _base_tool_definitions = tool_definitions
+
+    def tool_definitions() -> list:  # noqa: F811
+        return [{"type": "function", "function": {
+            "name": "odata_query",
+            "description": f"Read data from SAP with one OData GET request. Returns at most {MAX_ROWS} rows.",
+            "parameters": {"type": "object", "properties": {
+                "entity_set": {"type": "string", "description": "Entity set name, e.g. A_PurchaseOrder"},
+                "filter": {"type": "string", "description": "Optional OData $filter"},
+                "select": {"type": "string", "description": "Comma-separated fields to return"},
+                "orderby": {"type": "string", "description": "Optional, e.g. 'PurchaseOrderDate desc'"},
+                "expand": {"type": "string", "description": "Optional navigation property to include"},
+                "top": {"type": "string", "description": "Max rows, default and max " + str(MAX_ROWS)},
+            }, "required": ["entity_set"]},
+        }}]
+
+    _base_run_tool = run_tool
+
+    def run_tool(name: str, args: dict) -> dict:  # noqa: F811
+        if name == "odata_query":
+            return run_odata(args or {})
+        return {"error": f"Unknown tool: {name}"}
